@@ -127,6 +127,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.pip_venv_witness
 
 # Spyder project settings
 .spyderproject
