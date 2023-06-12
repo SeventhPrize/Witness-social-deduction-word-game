@@ -17,7 +17,8 @@ async def on_ready():
 
 @client.event
 async def on_message(message):
-    if message.author is client.user:
+
+    if message.author.id == client.user.id:
         return
 
     if message.content == "$hello":
@@ -31,8 +32,16 @@ async def on_message(message):
         game_list.append(new_game)
         return
     
+    if message.content == "$prune":
+        for category in message.guild.categories:
+            if category.name.startswith("Witness-"):
+                for channel in category.channels:
+                    await channel.delete()
+                await category.delete()
+        return
+
     for game in game_list:
-        if message.channel.category is game.category:
+        if message.channel.category.id == game.category.id:
             await game.handle_message(message)
             return
 
@@ -57,9 +66,9 @@ class Game:
         self.registration_msg = registration_msg
         self.player_list = []
         self.villain_count = 1
-        self.gamestate = "Creation"
         await self.add_player(creator)
-        await self.send_game_creator_message()
+        await self.send_game_creation_message()
+        self.gamestate = await GameStateCreation.initialize(self)
         return self
 
     async def add_player(self, user):
@@ -67,12 +76,17 @@ class Game:
         self.player_list.append(player)
         return player
     
-    async def send_game_creator_message(self):
+    async def send_game_creation_message(self):
         await self.player_list[0].send_message("[CREATION MENU HERE]")
         return
 
+    async def send_global_message(self, content):
+        for player in self.player_list:
+            await player.send_message(content)
+        return
+
     async def handle_message(self, message):
-        pass
+        await self.gamestate.handle_message(message)
 
 class Player:
     user = None
@@ -101,7 +115,7 @@ class Player:
     async def send_message(self, content):
         await self.channel.send(content) 
         return
-
+    
 class GameState:
     
     game = None
@@ -114,10 +128,45 @@ class GameState:
     async def handle_message(self, message):
         pass
 
-
 class GameStateCreation(GameState):
 
-    # TODO visitor framework implementation to handle messages
+    async def initialize(game):
+        self = GameStateCreation()
+        self.game = game
+        return self
+
+    async def handle_message(self, message):
+        split_message = message.content.strip().split()
+
+        # if host sent the message
+        if message.author.id == self.game.player_list[0].user.id:
+            if split_message[0] == "$villaincount":
+                if len(split_message) == 2 and split_message[1].isdigit():
+                    found_int = int(split_message[1])
+                    self.game.villain_count = found_int
+                    await self.game.send_global_message(f"Game host set number of villains to {found_int}.")
+                else:
+                    await self.game.player_list[0].send_message("Declare the number of villains using the format `$villaincount #`, where `#` is the desired number of villains.")
+                return
+            if split_message[0] == "$start":
+                if self.game.villain_count <= 0 or self.game.villain_count >= len(self.game.player_list):
+                    await self.game.player_list[0].send_message("Cannot start game until the number of villains has been set to a number larger than 0 and smaller than the player count."
+                                                                + "\n" + f"The current number of players is {len(self.game.player_list)}, and the number of villains is {self.game.villain_count}."
+                                                                + "\n" + "Declare the number of villains using the format `$villaincount #`, where `#` is the desired number of villains.")
+                else:
+                    self.game.gamestate = await GameStateNight.initialize(self.game)       
+        else:
+            pass
+
+class GameStateNight(GameState):
+    
+    async def intialize(game):
+        self = GameStateNight()
+        self.game = game
+        return self
+    
+    async def handle_message(self, message):
+        return await super().handle_message(message)
 
 load_dotenv()  # take environment variables from .env.
 client.run(os.getenv('DISCORD_TOKEN'))
