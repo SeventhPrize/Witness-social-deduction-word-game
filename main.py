@@ -2,6 +2,8 @@ import discord
 import os
 import asyncio
 import random
+import player_roles
+from time import time
 from dotenv import load_dotenv
 
 intents = discord.Intents.default()
@@ -56,6 +58,7 @@ async def on_reaction_add(reaction, user):
 class Game:
     category = None
     registration_msg = None
+    keyword = None
     player_list = None
     villain_count = None
     gamestate = None
@@ -64,6 +67,7 @@ class Game:
         self = Game()
         self.category = category
         self.registration_msg = registration_msg
+        self.keyword = "TEST"
         self.player_list = []
         self.villain_count = 1
         await self.add_player(creator)
@@ -72,7 +76,7 @@ class Game:
         return self
 
     async def add_player(self, user):
-        player = await Player.initialize(user, self.category)
+        player = await Player.initialize(user, self)
         self.player_list.append(player)
         return player
     
@@ -90,14 +94,14 @@ class Game:
 
 class Player:
     user = None
-    category = None
+    game = None
     channel = None
     role = None
 
-    async def initialize(user, category):
+    async def initialize(user, game):
         self = Player()
         self.user = user
-        self.category = category
+        self.game = game
         self.role = None
         self.channel = await self.create_private_channel(user)
         await self.send_message("[RULES HERE]")
@@ -105,11 +109,11 @@ class Player:
 
     async def create_private_channel(self, user):
         overwrites = {
-            self.category.guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            self.game.category.guild.default_role: discord.PermissionOverwrite(view_channel=False),
             user: discord.PermissionOverwrite(view_channel=True),
-            self.category.guild.me: discord.PermissionOverwrite(view_channel=True)
+            self.game.category.guild.me: discord.PermissionOverwrite(view_channel=True)
         }
-        channel = await self.category.create_text_channel(user.name, overwrites=overwrites)
+        channel = await self.game.category.create_text_channel(user.name, overwrites=overwrites)
         return channel
     
     async def send_message(self, content):
@@ -119,10 +123,15 @@ class Player:
 class GameState:
     
     game = None
+    start = None
 
     async def initialize(game):
-        self = GameState()
+        return await GameState.intialize_helper(game, GameState())
+
+    async def intialize_helper(game, gamestate_instance):
+        self = gamestate_instance
         self.game = game
+        self.start = time()
         return self
 
     async def handle_message(self, message):
@@ -131,9 +140,7 @@ class GameState:
 class GameStateCreation(GameState):
 
     async def initialize(game):
-        self = GameStateCreation()
-        self.game = game
-        return self
+        return await GameState.intialize_helper(game, GameStateCreation())
 
     async def handle_message(self, message):
         split_message = message.content.strip().split()
@@ -145,25 +152,36 @@ class GameStateCreation(GameState):
                     found_int = int(split_message[1])
                     self.game.villain_count = found_int
                     await self.game.send_global_message(f"Game host set number of villains to {found_int}.")
+                    return
                 else:
-                    await self.game.player_list[0].send_message("Declare the number of villains using the format `$villaincount #`, where `#` is the desired number of villains.")
-                return
+                    await self.game.player_list[0].send_message("Invalid command. Declare the number of villains using the format `$villaincount #`, where `#` is the desired number of villains.")
+                    return
             if split_message[0] == "$start":
+                if len(self.game.player_list) < 2 or len(self.game.player_list) > 12:
+                    await self.game.player_list[0].send_message("Cannot start game with fewer than 2 players or more than 12 players."
+                                                                + "\n" + f"The current number of players is {len(self.game.player_list)}.")
+                    return
                 if self.game.villain_count <= 0 or self.game.villain_count >= len(self.game.player_list):
                     await self.game.player_list[0].send_message("Cannot start game until the number of villains has been set to a number larger than 0 and smaller than the player count."
                                                                 + "\n" + f"The current number of players is {len(self.game.player_list)}, and the number of villains is {self.game.villain_count}."
                                                                 + "\n" + "Declare the number of villains using the format `$villaincount #`, where `#` is the desired number of villains.")
+                    return
                 else:
+                    role_list = [player_roles.RoleSheriff(),
+                                 player_roles.RoleMastermind()]
+                    role_list += [player_roles.RoleVillain()] * (self.game.villain_count - 1)
+                    role_list += [player_roles.RoleCivilian()] * (len(self.game.player_list) - self.game.villain_count - 1)
+                    random.shuffle(role_list)
+                    for ply_ind, ply in enumerate(self.game.player_list):
+                        ply.role = await role_list[ply_ind].initialize(ply)
+                        
                     self.game.gamestate = await GameStateNight.initialize(self.game)       
-        else:
-            pass
-
+                    return
+        
 class GameStateNight(GameState):
     
     async def intialize(game):
-        self = GameStateNight()
-        self.game = game
-        return self
+        return await GameState.intialize_helper(game, GameStateNight())
     
     async def handle_message(self, message):
         return await super().handle_message(message)
