@@ -1,8 +1,8 @@
 import discord
 import os
-import asyncio
 import random
-import player_roles
+import gamestates as gs
+import gpt_responder as gptr
 from time import time
 from dotenv import load_dotenv
 
@@ -28,18 +28,20 @@ async def on_message(message):
         return
 
     if message.content == "$play":
-        category = await message.guild.create_category("Witness-" + str(random.randint(1000, 9999)))
-        registration_msg = await message.channel.send(f"React to this message to play Witness: Social Deduction Word Game. After reacting, check category `{category}` for your private channel.")
-        new_game = await Game.initialize(category, registration_msg, message.author)
-        game_list.append(new_game)
+        game_list.append(await Game.initialize(message))
         return
     
     if message.content == "$prune":
+        category_counter = 0
+        channel_counter = 0
         for category in message.guild.categories:
             if category.name.startswith("Witness-"):
                 for channel in category.channels:
+                    channel_counter += 1
                     await channel.delete()
+                category_counter += 1
                 await category.delete()
+        await message.channel.send(f"Pruned {category_counter} categories containing {channel_counter} channels.")
         return
 
     for game in game_list:
@@ -60,19 +62,25 @@ class Game:
     registration_msg = None
     keyword = None
     player_list = None
+    n_words_per_player = None
     villain_count = None
+    sheriff_player = None
     gamestate = None
+    gpt_witness = None
 
-    async def initialize(category, registration_msg, creator):
+    async def initialize(trigger_msg):
         self = Game()
-        self.category = category
-        self.registration_msg = registration_msg
+        self.category = await trigger_msg.guild.create_category("Witness-" + str(random.randint(1000, 9999)))
+        self.registration_msg = await trigger_msg.channel.send(f"React to this message to play Witness: Social Deduction Word Game. After reacting, check category `{self.category}` for your private channel.")
+        self.gpt_witness = gptr.GptWitness()
         self.keyword = "TEST"
         self.player_list = []
+        self.n_words_per_player = 2
         self.villain_count = 1
-        await self.add_player(creator)
+        self.sheriff_player = None
+        await self.add_player(trigger_msg.author)
         await self.send_game_creation_message()
-        self.gamestate = await GameStateCreation.initialize(self)
+        self.gamestate = await gs.GameStateCreation.initialize(self)
         return self
 
     async def add_player(self, user):
@@ -91,6 +99,9 @@ class Game:
 
     async def handle_message(self, message):
         await self.gamestate.handle_message(message)
+
+class GameSettings:
+    pass
 
 class Player:
     user = None
@@ -120,71 +131,8 @@ class Player:
         await self.channel.send(content) 
         return
     
-class GameState:
-    
-    game = None
-    start = None
-
-    async def initialize(game):
-        return await GameState.intialize_helper(game, GameState())
-
-    async def intialize_helper(game, gamestate_instance):
-        self = gamestate_instance
-        self.game = game
-        self.start = time()
-        return self
-
     async def handle_message(self, message):
-        pass
-
-class GameStateCreation(GameState):
-
-    async def initialize(game):
-        return await GameState.intialize_helper(game, GameStateCreation())
-
-    async def handle_message(self, message):
-        split_message = message.content.strip().split()
-
-        # if host sent the message
-        if message.author.id == self.game.player_list[0].user.id:
-            if split_message[0] == "$villaincount":
-                if len(split_message) == 2 and split_message[1].isdigit():
-                    found_int = int(split_message[1])
-                    self.game.villain_count = found_int
-                    await self.game.send_global_message(f"Game host set number of villains to {found_int}.")
-                    return
-                else:
-                    await self.game.player_list[0].send_message("Invalid command. Declare the number of villains using the format `$villaincount #`, where `#` is the desired number of villains.")
-                    return
-            if split_message[0] == "$start":
-                if len(self.game.player_list) < 2 or len(self.game.player_list) > 12:
-                    await self.game.player_list[0].send_message("Cannot start game with fewer than 2 players or more than 12 players."
-                                                                + "\n" + f"The current number of players is {len(self.game.player_list)}.")
-                    return
-                if self.game.villain_count <= 0 or self.game.villain_count >= len(self.game.player_list):
-                    await self.game.player_list[0].send_message("Cannot start game until the number of villains has been set to a number larger than 0 and smaller than the player count."
-                                                                + "\n" + f"The current number of players is {len(self.game.player_list)}, and the number of villains is {self.game.villain_count}."
-                                                                + "\n" + "Declare the number of villains using the format `$villaincount #`, where `#` is the desired number of villains.")
-                    return
-                else:
-                    role_list = [player_roles.RoleSheriff(),
-                                 player_roles.RoleMastermind()]
-                    role_list += [player_roles.RoleVillain()] * (self.game.villain_count - 1)
-                    role_list += [player_roles.RoleCivilian()] * (len(self.game.player_list) - self.game.villain_count - 1)
-                    random.shuffle(role_list)
-                    for ply_ind, ply in enumerate(self.game.player_list):
-                        ply.role = await role_list[ply_ind].initialize(ply)
-                        
-                    self.game.gamestate = await GameStateNight.initialize(self.game)       
-                    return
-        
-class GameStateNight(GameState):
+        return await self.role.handle_message(message)
     
-    async def intialize(game):
-        return await GameState.intialize_helper(game, GameStateNight())
-    
-    async def handle_message(self, message):
-        return await super().handle_message(message)
-
 load_dotenv()  # take environment variables from .env.
 client.run(os.getenv('DISCORD_TOKEN'))
