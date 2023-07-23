@@ -19,8 +19,14 @@ from dotenv import load_dotenv
 
 class GptWitness:
     
-    banned_words = None
+    keyword = None
     n_words = None
+    banned_words = None
+
+    def __init__(self, keyword, n_words, banned_words):
+        self.keyword = keyword
+        self.n_words = n_words
+        self.banned_words = keyword.split() + banned_words
 
     def ask(self, prompt):
         msg = ""
