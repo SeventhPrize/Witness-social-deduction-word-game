@@ -1,5 +1,6 @@
 """
 Game states/phases: Creation, Night, Day, Guess, Trial
+Random word generation from: https://github.com/first20hours/google-10000-english/blob/master/google-10000-english-usa-no-swears-long.txt
 """
 
 from time import time
@@ -82,7 +83,7 @@ class GameState:
                     await self.game.send_global_message(msg)
 
         # Thank the players
-        await self.game.send_global_message("Thanks for playing this trial version of **Witness: The Social Deduction Word Game**. Starting new game . . .")
+        await self.game.send_global_message(":pray: Thanks for playing this trial version of **Witness: The Social Deduction Word Game**. Starting new game . . .")
         
         # Start new game
         self.game.gamestate = await GameStateCreation.initialize(self.game)
@@ -163,18 +164,24 @@ class GameStateCreation(GameState):
             
         # Handle player leaving the game
         if message.content == "$leavegame":
-            for ply in self.game.player_list:
+            for ply in self.game.player_list[1:]:
                 if ply.user.id == message.author.id:
                     self.game.player_list.remove(ply)
-                    await self.game.send_global_message(f"`{ply.user.name}` left the game.")
+                    await self.game.send_global_message(f"`{ply.user.name}` left the game. There are now {len(self.game.player_list)} players.")
                     await ply.channel.delete()
                     return
+            if message.author.id == self.game.player_list[0].user.id:
+                await ply.send_message("Game host cannot leave!")
+                return
                 
     async def proceed(self):
         '''
         Changes the Game's game state to Night
         Assigns a role to each player
         '''
+
+        # Get keyword
+        self.game.keyword = self.get_random_word()
 
         # Randomized list of players for role assignment
         temp_player_list = self.game.player_list.copy()
@@ -208,6 +215,12 @@ class GameStateCreation(GameState):
         # Move to Night phase
         self.game.gamestate = await GameStateNight.initialize(self.game)
         return
+    
+    def get_random_word(self):
+        with open("google-10000-english-usa-no-swears-long.txt") as f:
+            words = f.readlines()
+        return random.choice(words)
+
         
 class GameStateNight(GameState):
     '''
@@ -304,7 +317,7 @@ class GameStateTrial(GameState):
         self.votes = {}
         self.phase_end_message = f"**The Trial phase's time limit ({self.time_limit} sec) has been reached! If you didn't vote or failed to submit a Trial phase task, your submission will be ignored.**"
         suspects = [f"\n`{ply.user.name}`" for ply in self.game.player_list]
-        await self.game.send_global_message(f"Everyone has {self.time_limit} seconds to vote for a player to convict. The Civilians win if the player with/tied for the most votes is a Villain. You can vote exactly once. You can change your vote as long as the time limit has not been reached and at least one player has not voted. Type (or copy/paste) the name of the player you want to vote for:" + "".join(suspects))
+        await self.game.send_global_message(f":ballot_box: Everyone has {self.time_limit} seconds to vote for a player to convict. The Civilians win if the player with/tied for the most votes is a Villain. You can vote exactly once. You can change your vote as long as the time limit has not been reached and at least one player has not voted. Type (or copy/paste) the name of the player you want to vote for:" + "".join(suspects))
         for ply in self.game.player_list:
             await ply.role.trial_action()
         return self
@@ -336,7 +349,7 @@ class GameStateTrial(GameState):
         max_votes = max([len(accusers) for accusers in vote_dict.values()])
         convicted = [suspect for suspect in vote_dict.keys()
                      if len(vote_dict[key]) == max_votes]
-        await self.game.send_global_message("The following players were convicted: "
+        await self.game.send_global_message(":link: The following players were convicted: "
                                             + ", ".join([f"`{suspect}`"
                                                          for suspect in convicted]))
 
@@ -344,10 +357,10 @@ class GameStateTrial(GameState):
         guilty = set(convicted).intersection([ply.user.name for ply in self.game.player_list
                                               if isinstance(ply.role, pr.RoleVillain)])
         if guilty:
-            await self.game.send_global_message("**Congratulations, Civilians!** The following Villains were convicted: "
+            await self.game.send_global_message(":cop: **Congratulations, Civilians!** The following Villains were convicted: "
                                                 + ", ".join([f"`{suspect}`" for suspect in guilty]))
         else:
-            await self.game.send_global_message("**Congratulations, Villains!** You have escaped justice.")
+            await self.game.send_global_message(":spy: **Congratulations, Villains!** You have escaped justice.")
 
         await self.conclude()
     

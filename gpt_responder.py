@@ -1,5 +1,5 @@
 """
-GptWitness object lets Sheriff ask questions to the WITNESS via ChatGPT-3.5 Turbo.
+GptWitness object lets Sheriff ask questions to the WITNESS via GPT-3.5 Turbo.
 """
 
 import openai
@@ -13,13 +13,13 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 
 class GptWitness:
     '''
-    Uses ChatGPT-3.5 Turbo to allow Sheriff to ask open-ended questions to the Witness.
+    Uses GPT-3.5 Turbo to allow Sheriff to ask open-ended questions to the Witness.
     '''
     
     keyword = None              # String keyword
     n_words = None              # Target number of words for GPT output
     banned_words = None         # List of string banned words
-    system_instructions = None  # String system-level prompt to ChatGPT
+    system_instructions = None  # String system-level prompt to GPT
     verbose = None              # Boolean whether to print prompts and responses to terminal for debugging
 
     def __init__(self, keyword, n_words, banned_words, verbose=True):

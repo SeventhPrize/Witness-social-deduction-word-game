@@ -51,7 +51,7 @@ class Role:
         '''
         Sends the player an introduction message for their role.
         '''
-        await self.player.send_message(f"[ROLE INTRODUCTION: {self.title}]")
+        pass
 
     async def send_team_introduction_message(self):
         '''
@@ -114,7 +114,7 @@ class RoleCivilian(Role):
         '''
         Sends the player an intrdouction message for the Civilian team
         '''
-        await self.player.send_message("Civilian team INTRODUCTION")
+        await self.player.send_message("As a Civilian, your goal is to figure out the secret keyword or to identify a Villain.")
 
 class RoleVillain(Role):
     '''
@@ -133,8 +133,8 @@ class RoleVillain(Role):
         '''
         Sends the player an intrdouction message for the Villain team
         '''
-        await self.player.send_message("Villain team INTRODUCTION")
-        await self.player.send_message(f"The keyword is **{self.player.game.keyword}**.")
+        await self.player.send_message("As a Villain, your goal is to mislead the Civilians so that they cannot figure out the keyword. Stay hidden so that they do not suspect your villanous nature.")
+        await self.player.send_message(f":key: The keyword is **{self.player.game.keyword}**.")
 
         # Report the villainous teammates
         msg = "Here's your villainous team:"
@@ -165,6 +165,12 @@ class RoleSheriff(RoleCivilian):
         self.witness_responses = []
         self.previous_guess_time = 0
         return self
+
+    async def send_role_introduction_message(self):
+        '''
+        Sends the Sheriff an introduction message.
+        '''
+        await self.player.send_message("Sheriff, you are the only player with the power to ask the WITNESS questions about the keyword.")
 
     async def daily_action(self):
         '''
@@ -251,10 +257,10 @@ class RoleSheriff(RoleCivilian):
             true_stems = [stemmer.stem(re.sub(r'[^a-zA-Z]', '', word.lower()))
                           for word in self.player.game.keyword.split()]
             if guess_stems == true_stems:
-                await self.player.game.send_global_message("The Sheriff guessed **correctly**. The Civilians win!")
+                await self.player.game.send_global_message(":white_check_mark: The Sheriff guessed **correctly**. The Civilians win!")
                 await self.player.game.gamestate.proceed(go_to_trial=False)
             else:
-                await self.player.game.send_global_message("The Sheriff was **wrong**. The Villains gain the upper hand!")
+                await self.player.game.send_global_message(":no_entry_sign: The Sheriff was **wrong**. The Villains gain the upper hand!")
                 await self.player.game.gamestate.proceed(go_to_trial=True)
             return
         
@@ -285,13 +291,19 @@ class RoleMastermind(RoleVillain):
         self = await Role.initialize_helper(player, "Mastermind", RoleMastermind())
         self.n_banned_words = self.player.game.settings["numbannedwords"]
         return self
+    
+    async def send_role_introduction_message(self):
+        '''
+        Sends the Mastermind an introduction message.
+        '''
+        await self.player.send_message("Mastermind, you have the power to censor the WITNESS, making it difficult for the Civilians to learn the keyword.")
 
     async def night_action(self):
         '''
         Prompts the Mastermind to ban words from WITNESS vocabulary
         '''
         await super().night_action()
-        await self.player.game.send_global_message("The Mastermind is banning words from the WITNESS's vocabulary . . .")
+        await self.player.game.send_global_message(":dizzy_face: The Mastermind is banning words from the WITNESS's vocabulary . . .")
         await self.player.send_message(f"**Mastermind, write {self.n_banned_words} words (separated by spaces) that the WITNESS cannot use when describing the keyword, `{self.player.game.keyword}`.**")
         
     async def handle_message(self, message):

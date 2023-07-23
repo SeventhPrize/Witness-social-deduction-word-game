@@ -33,7 +33,6 @@ class Game:
         await self.registration_msg.add_reaction("\N{THUMBS UP SIGN}")
         
         # Initialize settings and parameters
-        self.keyword = self.get_keyword()
         self.player_list = []
         self.default_settings()
 
@@ -57,7 +56,7 @@ class Game:
         '''
         self.settings = {}
         self.settings["villaincount"] = 1   # Number of villain players
-        self.settings["numbannedwords"] = 5 # Number of words the Mastermind bans from WITNESS vocabulary
+        self.settings["numbannedwords"] = 8 # Number of words the Mastermind bans from WITNESS vocabulary
         self.settings["nightdur"] = 60      # Seconds duration of the Night phase
         self.settings["daydur"] = 300       # Seconds duration of the Day phase
         self.settings["guessdur"] = 90      # Seconds duration of the Guess phase
@@ -73,7 +72,8 @@ class Game:
         '''
         await ply.send_message("\n".join([(f"{param} \t {val}")
                                                   for param, val in self.settings.items()])
-                                        + "\n`$resetdefaultsettings` will reset to defaults")
+                                        + "\n`$<settingname> <settingvalue>` changes a specific setting."
+                                        + "\n`$resetdefaultsettings` resets to defaults.")
 
     async def add_player(self, user):
         '''
@@ -85,13 +85,14 @@ class Game:
         '''
         player = await Player.initialize(user, self)
         self.player_list.append(player)
+        await self.send_global_message(f"`{user.name}` joined the game! There are now {len(self.player_list)} players.")
         return player
     
     async def send_game_creation_message(self):
         '''
         Sends the game creation message to the game host.
         '''
-        await self.player_list[0].send_message("[CREATION MENU HERE]")
+        await self.player_list[0].send_message("**You are the game host. Use `$showsettings` to change settings. Use `$start` to start the game.**")
         return
 
     async def send_global_message(self, content):
@@ -145,7 +146,14 @@ class Player:
         self.game = game
         self.role = None
         self.channel = await self.create_private_channel(user)
-        await self.send_message("[RULES HERE]")
+        await self.send_message("Welcome to **Witness: The Social Deducation Word Game**, powered by **GPT-3.5 Turbo** and written by @SeventhPrize!"
+                                + "\n:supervillain: A heinous crime has upset the city. It's up to you to find the villains and restore the peace!"
+                                + "\n:key: A secret keyword will be chosen by when the game begins. The Civilians want to figure out the keyword by the end of the game. The Villains, who know the keyword, want to keep the keyword a secret by misleading the Civilians."
+                                + "\n:oncoming_police_car: The Sheriff will ask the WITNESS a series of open-ended questions to find clues about the keyword. The WITNESS's responses will scattered and shuffled among all the players, so everyone must collaborate to piece together the WITNESS's responses."
+                                + "\n:mag: The devious Mastermind will attempt to trick the Civilians by banning words from the WITNESS's vocabulary, making the truth even harder to discern."
+                                + "\n:ballot_box: But if the Villains may fall if they are too obvious with their tricks--at the end of the game, everyone will vote for a player they suspect to be a Villain. If a Villain receives the most votes, the Villains lose!"
+                                + "\n:person_in_tuxedo: The Villains win if they stop the Sheriff from finding out the keyword AND no Villain is convicted."
+                                + "\n\n:no_entry_sign: This channel is your dedicated communication method for this game. You may not direct-message other players, use admin privileges to view other players' channels, or otherwise use other players' information.")
         return self
 
     async def create_private_channel(self, user):
