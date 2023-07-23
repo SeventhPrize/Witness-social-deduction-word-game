@@ -10,6 +10,9 @@ import re
 import gamestates as gs
 from gpt_responder import GptWitness
 
+# Number of seconds between WITNESS questions. Saves money on OpenAI API.
+QUESTION_COOLDOWN = 15
+
 class Role:
     '''
     Abstract parent class for each of the player roles.
@@ -148,6 +151,7 @@ class RoleSheriff(RoleCivilian):
     prompt_char_limit = None    # Character limit on WITNESS question prompts
     witness_questions = None    # List of string questions asked to the WITNESS
     witness_responses = None    # List of string responses received from the WITNESS
+    previous_guess_time = None  # time() call at the previous guess 
 
     async def initialize(player):
         '''
@@ -159,6 +163,7 @@ class RoleSheriff(RoleCivilian):
         self.prompt_char_limit = self.player.game.settings["questioncharlimit"]
         self.witness_questions = []
         self.witness_responses = []
+        self.previous_guess_time = 0
         return self
 
     async def daily_action(self):
@@ -189,11 +194,6 @@ class RoleSheriff(RoleCivilian):
 
         # If Day, handle message as questions to the WITNESS
         if isinstance(self.player.game.gamestate, gs.GameStateDay):
-
-            # Check for proper question length
-            if len(message.content) > self.prompt_char_limit:
-                await self.player.send_message(f"Your question must be fewer than {self.prompt_char_limit} characters. Your question was {len(message.content)} characters.")
-                return
             
             # $readytoguess ends Day early and immediately sends game state to Guess
             if message.content == "$readytoguess":
@@ -201,13 +201,23 @@ class RoleSheriff(RoleCivilian):
                 await self.player.game.gamestate.proceed()
                 return
             
+            # Check for question frequency cooldown
+            if time() - self.previous_guess_time < QUESTION_COOLDOWN:
+                await self.player.send_message(f"You're asking questions too quickly! Wait {QUESTION_COOLDOWN} seconds between questions.")
+                return
+            
+            # Check for proper question length
+            if len(message.content) > self.prompt_char_limit:
+                await self.player.send_message(f"Your question must be fewer than {self.prompt_char_limit} characters. Your question was {len(message.content)} characters.")
+                return
+
             # Record question and answer
             self.witness_questions.append(message.content)
-            raw_response = self.player.game.gpt_witness.ask(message.content)
-            self.witness_responses.append(raw_response)
+            witness_response = self.player.game.gpt_witness.ask(message.content)
+            self.witness_responses.append(" ".join(witness_response))
+            self.previous_guess_time = time()
 
             # Shuffle response and distribute clues to players
-            witness_response = raw_response.split()
             random.shuffle(witness_response)
             for ply in self.player.game.player_list:
                 observed_words = witness_response[: self.player.game.settings["wordsperplayer"]]

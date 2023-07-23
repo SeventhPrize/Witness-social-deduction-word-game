@@ -9,6 +9,9 @@ import os
 from gameplay import Game
 from dotenv import load_dotenv
 
+MAX_GAMES = 3
+MAX_PLAYERS = 12
+
 # Discord client settings
 intents = discord.Intents.default()
 intents.message_content = True
@@ -41,7 +44,10 @@ async def on_message(message):
 
     # Start new Witness game on $play
     if message.content == "$play":
-        game_list.append(await Game.initialize(message))
+        if len(game_list) < MAX_GAMES:
+            game_list.append(await Game.initialize(message))
+        else:
+            await message.channel.send(f"Cannot create a new game. There are already ongoing {MAX_GAMES} games.")
         return
     
     # Clean up existing Witness categories and channels on $prune
@@ -72,7 +78,7 @@ async def on_reaction_add(reaction, user):
     for game in game_list:
         if reaction.message.id == game.registration_msg.id:
             if user not in [player.user for player in game.player_list]:
-                if len(game.player_list) < 12:
+                if len(game.player_list) < MAX_PLAYERS:
                     await game.add_player(user)
                     return
             
