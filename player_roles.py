@@ -1,6 +1,10 @@
+from nltk.stem.snowball import SnowballStemmer
 import discord
 import asyncio
 import random
+from time import time
+import math
+import re
 import gamestates as gs
 
 class Role:
@@ -45,12 +49,14 @@ class Role:
     #         return
 
     async def night_action(self):
-        if not isinstance(self, RoleMastermind):
-            await self.player.send_message(f"Hold tight while the Mastermind secretly bans words from the WITNESS vocabulary . . .")
+        pass
+        # if not isinstance(self, RoleMastermind):
+        #     await self.player.send_message(f"Hold tight while the Mastermind secretly bans words from the WITNESS vocabulary . . .")
 
     async def daily_action(self):
-        if not isinstance(self, RoleSheriff):
-            await self.player.send_message(f"Hold tight while Sheriff `{self.player.game.sheriff_player.user.name}` asks the WITNESS a question about the keyword . . .")
+        pass
+        # if not isinstance(self, RoleSheriff):
+        #     await self.player.send_message(f"Hold tight while Sheriff `{self.player.game.sheriff_player.user.name}` asks the WITNESS a question about the keyword . . .")
 
     async def guess_action(self):
         pass
@@ -94,7 +100,13 @@ class RoleSheriff(RoleCivilian):
 
     async def daily_action(self):
         await super().daily_action()
+        await self.player.game.send_global_message(f"The Sheriff has {self.player.game.gamestate.time_limit} seconds to ask the WITNESS a series of open-ended questions to figure out the keyword. Everyone is encouraged to help--although the Villains might try to mislead. The WITNESS's response is vague and complicated: everyone sees a different portion of each of the WITNESS's clues.")
         await self.player.send_message("**Sheriff, ask the WITNESS a question about the keyword.**")
+
+    async def guess_action(self):
+        await super().guess_action()
+        await self.player.game.send_global_message(f"The Sheriff has {self.player.game.gamestate.time_limit} seconds to guess the keyword. They only have one attempt. Everyone is encouraged to help brainstorm. The keyword is made of up {len(self.player.game.keyword.split())} word(s).")
+        await self.player.send_message("Sheriff, make your guess.")
 
     async def handle_message(self, message):
         await super().handle_message(message)
@@ -105,7 +117,18 @@ class RoleSheriff(RoleCivilian):
                 await self.player.send_message(f"Your question must be fewer than {self.prompt_char_limit} characters. Your question was {len(message.content)} characters.")
                 return
             
-            witness_response = self.player.game.gpt_witness.ask(message.content).split()
+            if message.content == "$readytoguess":
+                await self.player.game.send_global_message("The Sheriff has elected to end questioning early!")
+                await self.player.game.gamestate.proceed()
+                return
+            
+            self.player.game.witness_questions.append(message.content)
+            
+            raw_response = self.player.game.gpt_witness.ask(message.content)
+            self.player.game.witness_responses.append(raw_response)
+
+            witness_response = raw_response.split()
+            
             random.shuffle(witness_response)
 
             for ply in self.player.game.player_list:
@@ -115,11 +138,34 @@ class RoleSheriff(RoleCivilian):
                 msg = f"Sheriff `{self.player.user.name}` asked the WITNESS:"
                 msg += f"\n\t**{message.content}**"
                 msg += "\n"
-                msg += "You observed the following words:"
+                msg += "You observed the following words."
                 for word in observed_words:
                     msg += f"\n\t**{word}**"
-
+                msg += "\n" + f"There are {math.floor(self.player.game.gamestate.time_limit - time() + self.player.game.gamestate.start)} of {self.player.game.gamestate.time_limit} seconds remaining."
                 await ply.send_message(msg)
+
+            return
+        
+        if isinstance(self.player.game.gamestate, gs.GameStateGuess):
+            guess = message.content.strip()
+            if len(guess.split()) != len(self.player.game.keyword.split()):
+                await self.player.send_message(f"Your guess for the keyword contained {len(guess.split())} word(s), but the keyword is made of {len(self.player.game.keyword.split())} word(s) (separated by spaces).")
+                return
+            
+            await self.player.game.send_global_message(f"The Sheriff guessed **{guess}**. The correct keyword is **{self.player.game.keyword}**.")
+
+            stemmer = SnowballStemmer("english")
+            guess_stems = [stemmer.stem(re.sub(r'[^a-zA-Z]', '', word.lower()))
+                           for word in guess.split()]
+            true_stems = [stemmer.stem(re.sub(r'[^a-zA-Z]', '', word.lower()))
+                          for word in self.player.game.keyword.split()]
+            if guess_stems == true_stems:
+                await self.player.game.send_global_message("The Sheriff guessed **correctly**. The Civilians win!")
+                await self.player.game.gamestate.proceed(go_to_trial=False)
+            else:
+                await self.player.game.send_global_message("The Sheriff was **wrong**. The Villains gain the upper hand!")
+                await self.player.game.gamestate.proceed(go_to_trial=True)
+            return
 
 
 class RoleMastermind(RoleVillain):
@@ -133,6 +179,7 @@ class RoleMastermind(RoleVillain):
 
     async def night_action(self):
         await super().night_action()
+        await self.player.game.send_global_message("The Mastermind is banning words from the WITNESS's vocabulary . . .")
         await self.player.send_message(f"**Mastermind, write {self.n_banned_words} words (separated by spaces) that the WITNESS cannot use when describing the keyword, `{self.player.game.keyword}`.**")
         
     async def handle_message(self, message):

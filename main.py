@@ -41,7 +41,7 @@ async def on_message(message):
                     await channel.delete()
                 category_counter += 1
                 await category.delete()
-        await message.channel.send(f"Pruned {category_counter} categories containing {channel_counter} channels.")
+        # await message.channel.send(f"Pruned {category_counter} categories containing {channel_counter} channels.")
         return
 
     for game in game_list:
@@ -51,6 +51,9 @@ async def on_message(message):
 
 @client.event
 async def on_reaction_add(reaction, user):
+    if user == client.user.id:
+        return
+
     for game in game_list:
         if reaction.message.id == game.registration_msg.id:
             if user not in [player.user for player in game.player_list]:
@@ -64,20 +67,24 @@ class Game:
     player_list = None
     n_words_per_player = None
     villain_count = None
-    sheriff_player = None
     gamestate = None
     gpt_witness = None
+
+    witness_questions = None
+    witness_responses = None
 
     async def initialize(trigger_msg):
         self = Game()
         self.category = await trigger_msg.guild.create_category("Witness-" + str(random.randint(1000, 9999)))
         self.registration_msg = await trigger_msg.channel.send(f"React to this message to play Witness: Social Deduction Word Game. After reacting, check category `{self.category}` for your private channel.")
+        await self.registration_msg.add_reaction("\N{THUMBS UP SIGN}")
         self.gpt_witness = gptr.GptWitness()
         self.keyword = "TEST"
         self.player_list = []
         self.n_words_per_player = 2
         self.villain_count = 1
-        self.sheriff_player = None
+        self.witness_questions = []
+        self.witness_responses = []
         await self.add_player(trigger_msg.author)
         await self.send_game_creation_message()
         self.gamestate = await gs.GameStateCreation.initialize(self)
