@@ -114,7 +114,7 @@ class RoleCivilian(Role):
         '''
         Sends the player an intrdouction message for the Civilian team
         '''
-        await self.player.send_message("As a Civilian, your goal is to figure out the secret keyword or to identify a Villain.")
+        await self.player.send_message("As a **Civilian**, your goal is to figure out the secret keyword or to identify a Villain.")
 
 class RoleVillain(Role):
     '''
@@ -133,7 +133,7 @@ class RoleVillain(Role):
         '''
         Sends the player an intrdouction message for the Villain team
         '''
-        await self.player.send_message("As a Villain, your goal is to mislead the Civilians so that they cannot figure out the keyword. Stay hidden so that they do not suspect your villanous nature.")
+        await self.player.send_message("As a **Villain**, your goal is to mislead the Civilians so that they cannot figure out the keyword. Stay hidden so that they do not suspect your villanous nature.")
         await self.player.send_message(f":key: The keyword is **{self.player.game.keyword}**.")
 
         # Report the villainous teammates
@@ -170,14 +170,14 @@ class RoleSheriff(RoleCivilian):
         '''
         Sends the Sheriff an introduction message.
         '''
-        await self.player.send_message("Sheriff, you are the only player with the power to ask the WITNESS questions about the keyword.")
+        await self.player.send_message("**Sheriff**, you are the only player with the power to ask the WITNESS questions about the keyword.")
 
     async def daily_action(self):
         '''
         Prompts the Sheriff to ask the WITNESS questions at Day
         '''
         await super().daily_action()
-        await self.player.game.send_global_message(f"The Sheriff has {self.player.game.gamestate.time_limit} seconds to ask the WITNESS a series of open-ended questions to figure out the keyword. Everyone is encouraged to help--although the Villains might try to mislead. The WITNESS's response is vague and complicated: everyone sees a different portion of each of the WITNESS's clues.")
+        await self.player.game.send_global_message(f"The Sheriff has {self.player.game.settings['daydur']} seconds to ask the WITNESS a series of open-ended questions to figure out the keyword. Everyone is encouraged to help--although the Villains might try to mislead. The WITNESS's response is vague and complicated: everyone sees a different portion of each of the WITNESS's clues.")
         await self.player.send_message("**Sheriff, ask the WITNESS a question about the keyword.**")
 
     async def guess_action(self):
@@ -185,7 +185,7 @@ class RoleSheriff(RoleCivilian):
         Prompts the Sheriff to guess the keyword at Guess
         '''
         await super().guess_action()
-        await self.player.game.send_global_message(f"The Sheriff has {self.player.game.gamestate.time_limit} seconds to guess the keyword. They only have one attempt. Everyone is encouraged to help brainstorm. The keyword is made of up {len(self.player.game.keyword.split())} word(s).")
+        await self.player.game.send_global_message(f"The Sheriff has {self.player.game.settings['guessdur']} seconds to guess the keyword. They only have one attempt. Everyone is encouraged to help brainstorm. The keyword is made of up {len(self.player.game.keyword.split())} word(s).")
         await self.player.send_message("Sheriff, make your guess.")
 
     async def handle_message(self, message):
@@ -296,7 +296,7 @@ class RoleMastermind(RoleVillain):
         '''
         Sends the Mastermind an introduction message.
         '''
-        await self.player.send_message("Mastermind, you have the power to censor the WITNESS, making it difficult for the Civilians to learn the keyword.")
+        await self.player.send_message("**Mastermind**, you have the power to censor the WITNESS, making it difficult for the Civilians to learn the keyword.")
 
     async def night_action(self):
         '''

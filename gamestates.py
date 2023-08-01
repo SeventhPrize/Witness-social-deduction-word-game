@@ -7,6 +7,7 @@ from time import time
 import math
 import random
 import player_roles as pr
+from gpt_responder import GptWitness
 
 # Limit the maximum characters in WITNESS question and responses. Saves OpenAI API costs.
 LIMITS = {"wordsperplayer" : 4,
@@ -55,7 +56,7 @@ class GameState:
         '''
         # If time limit is reached, then move to next GameState
         if time() - self.start > self.time_limit:
-            self.game.send_global_message(self.phase_end_message)
+            await self.game.send_global_message(self.phase_end_message)
             await self.proceed()
             return
         
@@ -217,7 +218,7 @@ class GameStateCreation(GameState):
         return
     
     def get_random_word(self):
-        with open("google-10000-english-usa-no-swears-long.txt") as f:
+        with open("pictionary_words.txt") as f:
             words = f.readlines()
         return random.choice(words)
 
@@ -244,6 +245,9 @@ class GameStateNight(GameState):
         '''
         Changes the Game's game state to Day
         '''
+        if self.game.gpt_witness is None:
+            n_words = self.game.settings["wordsperplayer"] * len(self.game.player_list)
+            self.game.gpt_witness = GptWitness(self.game.keyword, n_words, [])
         self.game.gamestate = await GameStateDay.initialize(self.game)
 
 class GameStateDay(GameState):

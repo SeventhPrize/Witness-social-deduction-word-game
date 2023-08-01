@@ -56,7 +56,7 @@ class Game:
         '''
         self.settings = {}
         self.settings["villaincount"] = 1   # Number of villain players
-        self.settings["numbannedwords"] = 8 # Number of words the Mastermind bans from WITNESS vocabulary
+        self.settings["numbannedwords"] = 3 # Number of words the Mastermind bans from WITNESS vocabulary
         self.settings["nightdur"] = 60      # Seconds duration of the Night phase
         self.settings["daydur"] = 300       # Seconds duration of the Day phase
         self.settings["guessdur"] = 90      # Seconds duration of the Guess phase
@@ -119,9 +119,13 @@ class Game:
                     return
         
         # If $resetdefaultsettings, resets the default settings
-        if message.content == "$resetdefaultsettings":
+        if message.content == "$resetdefaultsettings" and message.author.id == self.player_list[0].user.id:
             self.default_settings()
             await self.send_global_message("Game host reset settings to defaults.")
+       
+        # If $restartgame, restarts game
+        if message.content == "$restartgame" and message.author.id == self.player_list[0].user.id:
+            await self.gamestate.conclude()
         
         # Otherwise, let the GameState handle the message
         await self.gamestate.handle_message(message)
