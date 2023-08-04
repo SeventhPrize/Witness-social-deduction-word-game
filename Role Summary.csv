@@ -1,0 +1,13 @@
+﻿Title,Intro
+Civilian,Try to figure out the keyword and the Villain team.
+Villain,Mislead the Civilians so that they cannot figure out the keyword. Stay hidden so that they do not suspect you.
+Reporter,You find out whenever another player activates a special power during Questioning.
+Undercover,"Once per game, use command `$power` to show the active Questioner that you are a Civilian."
+Stenographer,"Once per game, use command `$power` to see the entirety of the next question asked to the WITNESS."
+Detective,You know one of the banned words.
+Forensic,"You know one of the banned words, but the vowels are missing and the letters are scrambled."
+Censorer,"Once per game, use command `$power` to censor the next WITNESS response. Everyone will only observe a single word from the response."
+Intimidator,"Once per game, use command `$power <text>` to add additional text to the next question asked to the WITNESS. Your addendum is secret."
+Hacker,"Once per game, use command `$power` to secretly force the WITNESS to ignore the next question they are asked. The WITNESS will instead answer the previous question again."
+Politician,"You are a Civilian. Once per game during Questioning, use command `$power` to become a Villain instead."
+Crook,"You were once an honest Civilian. But through dard deeds and selfish intentions, you have become a Villain."

@@ -1,20 +1,20 @@
 """
-Game states/phases: Creation, Night, Day, Guess, Trial
-Random word generation from: https://github.com/first20hours/google-10000-english/blob/master/google-10000-english-usa-no-swears-long.txt
+Game states/phases: Creation, Questioning, Guess, Trial
 """
-
+import numpy as np
+from nltk.stem.snowball import SnowballStemmer
 from time import time
 import math
 import random
-import deprecated.player_roles as pr
-import numpy as np
+import re
+import player_roles as pr
 from gpt_responder import GptWitness
-from nltk.stem.snowball import SnowballStemmer
 
 # Limit the maximum characters in WITNESS question and responses. Saves OpenAI API costs.
-LIMITS = {"wordsperplayer" : 4,
-          "questioncharlimit" : 100,
-          "questioncooldown" : 15}
+MAX_LIMITS = {"wordsperplayer" : 4,
+              "questioncharlimit" : 100,
+              "numbannedwords" : 20}
+MIN_LIMITS = {"questioncooldown" : 15}
 
 class GameState:
     '''
@@ -48,7 +48,7 @@ class GameState:
         self.game = game
         self.start = time()
         self.time_limit = 3600
-        self.phase_end_message = f"**This phase's time limit ({math.floor(self.time_limit)} sec) has been reached! If you had a task but did not submit an entry, your task will be ignored.**"
+        self.phase_end_message = f"**This phase's time limit ({math.floor(self.time_limit)}sec) has been reached! If you had a task but did not submit an entry, your task will be ignored.**"
         return self
 
     async def handle_message(self, message):
@@ -61,7 +61,7 @@ class GameState:
         if time() - self.start > self.time_limit:
             await self.game.send_global_message(self.phase_end_message)
             await self.proceed()
-            return
+            return "PROCEED"
         
         # Otherwise, have the sender's Player object handle the message
         for ply in self.game.player_list:
@@ -75,9 +75,20 @@ class GameState:
         Starts a new game on this same channel
         '''
         # Get everyone's roles
-        await self.game.send_global_message("Here is everyone's role for this game:"
-                                            + "".join([f"{ply.user.name} \t {ply.role.title}"
+        await self.game.send_global_message("Here is everyone's role for this game:\n"
+                                            + "\n".join([f"{ply.user.name} \t {ply.role.title}"
                                                        for ply in self.game.player_list]))
+
+        # Show WITNESS questions
+        msg = ""
+        if self.game.gpt_witness.witness_responses:
+            for question, response in zip(self.game.gpt_witness.witness_questions, self.game.gpt_witness.witness_responses):
+                msg += f"*{question}*\n{response}\n"
+        await self.game.send_global_message(msg)
+
+        # Report keyword
+        await self.game.send_global_message(f"The keyword was **{self.game.keyword}**.")
+        await self.game.send_global_message("The following words were banned: " + ", ".join(self.game.gpt_witness.banned_words))
 
         # Thank the players
         await self.game.send_global_message(":pray: Thanks for playing this trial version of **Witness: The Social Deduction Word Game**. Starting new game . . .")
@@ -120,25 +131,23 @@ class GameStateCreation(GameState):
             # Adjust player roles
             if len(split_msg[0]) > 2 and split_msg[0][0] == "$" and split_msg[0][1:] == "role":
                 split_msg[1] = split_msg[1].lower()
+                split_msg[2] = split_msg[2].lower()
                 if len(split_msg) != 3:
-                    await self.game.player_list[0].send_message("Incorrect syntax for role modification. `$role <roletitle> <add/remove>` adds/removes a special role to the game.")
+                    await self.game.player_list[0].send_message("Incorrect syntax for role modification. `$role <add/remove> <roletitle>` adds/removes a special role to the game.")
                     return
-                if split_msg[2] != "add" and split_msg[2] != "remove":
-                    await self.game.player_list[0].send_message("Incorrect syntax for role modificaiton. Third argument must be either `add` or `remove`.")
+                if split_msg[1] != "add" and split_msg[1] != "remove":
+                    await self.game.player_list[0].send_message("Incorrect syntax for role modificaiton. Second argument must be either `add` or `remove`.")
                     return
-                if split_msg[1] == "civilian" or split_msg[1] == "villain":
-                    await self.game.player_list[0].send_message("Basic villains and civilians are not special roles and do not need to be specially added.")
+                if split_msg[2] not in pr.get_titles():
+                    await self.game.player_list[0].send_message("Role title does not exist.")
                     return
-                if split_msg[1] not in pr.get_special_role_titles():
-                    await self.game.player_list[0].send_message("Special title does not exist.")
-                    return
-                if split_msg[2] == "add":
-                    self.game.settings["specialroles"].append(split_msg[1])
-                    await self.game.send_global_message(f"Host added role `{split_msg[1]}`.")
+                if split_msg[1] == "add":
+                    self.game.settings["specialroles"].add(split_msg[2])
+                    await self.game.send_global_message(f"Host added role `{split_msg[2]}`.")
                     return
                 else:
-                    self.game.settings["specialroles"].remove(split_msg[1])
-                    await self.game.send_global_message(f"Host removed role `{split_msg[1]}`.")
+                    self.game.settings["specialroles"].discard(split_msg[2])
+                    await self.game.send_global_message(f"Host removed role `{split_msg[2]}`.")
                     return
 
             # Adjust game numeric settings
@@ -153,8 +162,12 @@ class GameStateCreation(GameState):
                         return
                     
                     # Confirm the new setting value is within limits
-                    if setting_name in LIMITS.keys() and found_int > LIMITS[setting_name]:
-                        await self.game.player_list[0].send_message(f"Invalid setting value. `{setting_name}` has maximum limit of {LIMITS[setting_name]}.")
+                    if setting_name in MAX_LIMITS.keys() and found_int > MAX_LIMITS[setting_name]:
+                        await self.game.player_list[0].send_message(f"Invalid setting value. `{setting_name}` has maximum limit of {MAX_LIMITS[setting_name]}.")
+                        return
+                    
+                    if setting_name in MIN_LIMITS.keys() and found_int < MIN_LIMITS[setting_name]:
+                        await self.game.player_list[0].send_message(f"Invalid setting value. `{setting_name}` has minimum limit of {MIN_LIMITS[setting_name]}.")
                         return
 
                     # Set new setting
@@ -172,15 +185,15 @@ class GameStateCreation(GameState):
                     await self.game.player_list[0].send_message("Cannot start game with fewer than 2 players or more than 12 players."
                                                                 + "\n" + f"The current number of players is {len(self.game.player_list)}.")
                     return
-                
-                # Check proper villain count
-                if self.game.settings["villaincount"] <= 0 or self.game.settings["villaincount"] >= len(self.game.player_list):
-                    await self.game.player_list[0].send_message("Cannot start game until the number of villains has been set to a number larger than 0 and smaller than the player count."
-                                                                + "\n" + f"The current number of players is {len(self.game.player_list)}, and the number of villains is {self.game.settings['villaincount']}."
-                                                                + "\n" + "Declare the number of villains using the format `$villaincount #`, where `#` is the desired number of villains.")
+                                
+                # Check proper role count
+                if len(self.game.player_list) < len(self.game.settings["specialroles"]):
+                    await self.game.player_list[0].send_message("Cannot start game with fewer players than the number of declared special roles."
+                                                                + "\n" + f"The current number of players is {len(self.game.player_list)}. The number of declared special roles is {len(self.game.settings['specialroles'])}."
+                                                                + "\n" + "Use command `$showroles` to see the list of roles.")
                     return
-                
-                # Proceed to Night game state
+
+                # Proceed to Questioning game state
                 await self.proceed()
                 return
             
@@ -198,57 +211,56 @@ class GameStateCreation(GameState):
                 
     async def proceed(self):
         '''
-        Changes the Game's game state to Night
+        Changes the Game's game state to Questioning
         Assigns a role to each player
         '''
 
         # Get keyword
         self.game.keyword = self.get_random_word()
 
+        # Build GPT Responder
+        self.game.gpt_witness = GptWitness(self.game,
+                                           self.game.keyword,
+                                           self.game.settings["numbannedwords"])
+
         # Randomized list of players for role assignment
         temp_player_list = self.game.player_list.copy()
         random.shuffle(temp_player_list)
-        self.game.role_dict = {}
 
-        # Assign Sheriff
-        ply_ind = 0
-        self.game.role_dict["Sheriff"] = [temp_player_list[ply_ind]]
-        temp_player_list[0].role = await pr.RoleSheriff.initialize(temp_player_list[0])
+        # Assign special roles
+        for title in self.game.settings["specialroles"]:
+            ply = temp_player_list.pop()
+            ply.role = await pr.role_builder(ply, title)
 
-        # Assign Civilians
-        ply_ind += 1
-        self.game.role_dict["Civilian"] = []
-        for _ in range(1, len(self.game.player_list) - self.game.settings["villaincount"]):
-            self.game.role_dict["Civilian"].append(temp_player_list[ply_ind])
-            temp_player_list[ply_ind].role = await pr.RoleCivilian.initialize(temp_player_list[ply_ind])
-            ply_ind += 1
+        # Assign civilians
+        while temp_player_list:
+            ply = temp_player_list.pop()
+            ply.role = await pr.role_builder(ply, "Civilian")
         
-        # Assign Mastermind
-        self.game.role_dict["Mastermind"] = [temp_player_list[ply_ind]]
-        temp_player_list[ply_ind].role = await pr.RoleMastermind.initialize(temp_player_list[ply_ind])
-        
-        # Assign Villains
-        ply_ind += 1
-        for _ in range(1, self.game.settings["villaincount"]):
-            self.game.role_dict["Villain"] = temp_player_list[ply_ind]
-            temp_player_list[ply_ind].role = await pr.RoleVillain.initialize(temp_player_list[ply_ind])
-            ply_ind += 1
+        # Send intro messages
+        for ply in self.game.player_list:
+            await ply.role.send_team_introduction_message()
 
         # Move to Questioning phase
         self.game.gamestate = await GameStateQuestion.initialize(self.game)
         return
     
     def get_random_word(self):
+        '''
+        RETURNS a random word from pictionary_words.txt
+        '''
         with open("pictionary_words.txt") as f:
             words = f.readlines()
-        return random.choice(words)
+        keyword = random.choice(words).strip()
+        print(f"'{keyword}'")
+        return keyword
 
 class GameStateQuestion(GameState):
     '''
     Questioning phase. Players take turns questioning the WITNESS about the keyword.
     '''
 
-    previous_guess_time = None
+    previous_guess_time = None  # The time() seconds of the most recent guess
 
     async def initialize(game):
         '''
@@ -256,12 +268,21 @@ class GameStateQuestion(GameState):
         INPUT
             game; Game object
         '''
+        # Get object instance
         self = await GameState.initialize_helper(game, GameStateQuestion())
         self.time_limit = self.game.settings["questiondur"]
-        self.phase_end_message = f"**The Questioning phase's time limit ({self.time_limit} sec) has been reached before anyone guessed the keyword. The current Questioner must attempt to guess the keyword!**"
+        self.phase_end_message = f"**The Questioning phase's time limit ({self.time_limit}sec) has been reached before anyone guessed the keyword. The current Questioner must attempt to guess the keyword!**"
+
+        # Give player instructions
+        await self.game.send_global_message(f":interrobang: Players will now take turns asking the WITNESS a question about the keyword. You have {self.time_limit}sec.")
         for ply in self.game.player_list:
             await ply.role.question_action()
+
+        # Set initial questioner
+        self.game.questioner = random.randrange(len(self.game.player_list))
+        await self.send_questioner_instructions()
         self.previous_guess_time = time()
+
         return self
     
     async def proceed(self):
@@ -271,9 +292,18 @@ class GameStateQuestion(GameState):
         self.game.gamestate = await GameStateGuess.initialize(self.game)
 
     async def handle_message(self, message):
-        await super().handle_message(message)
+        '''
+        Handles the input message
+        INPUT
+            message; Discord Message object to handle
+        '''
+        # Check that the time limit has not passed
+        flag = await super().handle_message(message)
+        if flag and flag == "PROCEED":
+            return
 
-        if message.author.id == self.game.get_questioner().user.id:
+        # Check for questioner message
+        if message.author.id == (self.game.get_questioner()).user.id:
 
             # If $readytoguess, end questioning early
             if message.content == "$readytoguess":
@@ -282,52 +312,58 @@ class GameStateQuestion(GameState):
                 return
 
             # Ask the question
-            split_msg = message.split()
-            if len(split_msg) == 2 and split_msg[0] == "$ask":
+            split_msg = message.content.split()
+            if len(split_msg) >= 2 and split_msg[0] == "$ask":
                 
                 # Check for question frequency cooldown
-                if time() - self.previous_guess_time < LIMITS["questioncooldown"]:
-                    await self.game.get_questioner().send_message(f"You're asking questions too quickly! Wait {LIMITS['questioncooldown']} seconds between questions.")
+                if time() - self.previous_guess_time < MIN_LIMITS["questioncooldown"]:
+                    await (self.game.get_questioner()).send_message(f"You're asking questions too quickly! Wait {MIN_LIMITS['questioncooldown']} seconds between questions.")
                     return
                 
                 # Check for proper question length
                 if len(split_msg[1]) > self.game.settings["questioncharlimit"]:
-                    await self.game.get_questioner().send_message(f"Your question must be fewer than {self.game.settings['questioncharlimit']} characters. Your question was {len(split_msg[1])} characters.")
+                    await (self.game.get_questioner()).send_message(f"Your question must be fewer than {self.game.settings['questioncharlimit']} characters. Your question was {len(split_msg[1])} characters.")
                     return
 
                 # Record question and answer
-                # self.game.gpt_witness.witness_questions.append(split_msg[1])
-                witness_response = self.game.gpt_witness.ask(split_msg[1])
+                question = " ".join(split_msg[1:])
+
+                witness_response = await self.game.gpt_witness.ask(question)
                 witness_words = witness_response.split()
-                # self.game.gpt_witness.witness_responses.append(self.game.get_questioner().user.name + ": " + witness_response)
+                # self.game.gpt_witness.witness_responses.append((self.game.get_questioner()).user.name + ": " + witness_response)
                 self.previous_guess_time = time()
 
-                # Shuffle response and distribute clues to players
+                # Shuffle response
                 random.shuffle(witness_words)
-                if "Censorer" in self.game.powers.keys():
-                    if len(self.game.player_list) > len(witness_words):
-                        split_response = witness_words[:len(self.game.player_list)]
+                if "Censorer" in self.game.powers.keys() and len(self.game.player_list) <= len(witness_words):
+                    split_response = [[word] for word in witness_words[:len(self.game.player_list)]]
                     await self.game.send_global_message("The villainous **Censorer** has muddled the WITNESS response! Everyone only observes one word this round.")
-                    self.game.powers.remove("censorer")
                 else:
                     split_response = np.array_split(np.array(witness_words), len(self.game.player_list))
+                
+                # Distribute response to players
                 for ply in self.game.player_list:
                     observed_words = split_response.pop()
-                    msg = f"`{self.game.get_questioner().user.name}` questioned the WITNESS."
+                    msg = f"`{(self.game.get_questioner()).user.name}` questioned the WITNESS."
                     msg += "\n"
                     msg += "You observed the following words."
                     for word in observed_words:
                         msg += f"\n\t**{word}**"
                     msg += "\n" + f"There are {math.floor(self.game.gamestate.time_limit - time() + self.game.gamestate.start)} of {self.game.gamestate.time_limit} seconds remaining."
                     await ply.send_message(msg)    
+                
+                # Rotate to new questioner and reset power activations
                 self.game.questioner = (self.game.questioner + 1) % len(self.game.player_list)
                 await self.send_questioner_instructions()   
                 self.game.powers = {}     
                 return
             
     async def send_questioner_instructions(self):
-        await self.game.send_global_message(f"`{self.game.get_quetioner().user.name}` is the Questioner!")
-        await self.game.get_questioner().send_message("Use `$ask <question text>` to ask the WITNESS a question.")
+        '''
+        Messages the current questioner with instructions about how to ask questions to the WITNESS
+        '''
+        await self.game.send_global_message(f"`{(self.game.get_questioner()).user.name}` is the Questioner!")
+        await (self.game.get_questioner()).send_message(":mag: Use `$ask <question text>` to ask the WITNESS a question. If the group is ready to guess the keyword before time is up, use command `$readytoguess`.")
         return
                 
             
@@ -345,7 +381,9 @@ class GameStateGuess(GameState):
         '''
         self = await GameState.initialize_helper(game, GameStateGuess())
         self.time_limit = self.game.settings["guessdur"]
-        self.phase_end_message = f"**The Guess phase's time limit ({self.time_limit} sec) has been reached! The Questioner didn't submit a guess in time. Civilians' only recourse is to capture a Villain!**"
+        self.phase_end_message = f"**The Guess phase's time limit ({self.time_limit}sec) has been reached! The Questioner didn't submit a guess in time. Civilians' only recourse is to capture a Villain!**"
+        await self.game.send_global_message(f":detective: Help **{(self.game.get_questioner()).user.name}** guess the keyword. The keyword is made of {len(self.game.keyword.split())} words. You have {self.time_limit}sec.")
+        await (self.game.get_questioner()).send_message("Use command `$guess <your guess>` to make your guess.")
         for ply in self.game.player_list:
             await ply.role.guess_action()
         return self
@@ -362,31 +400,40 @@ class GameStateGuess(GameState):
             await self.conclude()
 
     async def handle_message(self, message):
-        await super().handle_message(message)
+        '''
+        Handles the input message
+        INPUT
+            message; Discord Message object to handle
+        '''
+        # Check that the time limit has not passed
+        flag = await super().handle_message(message)
+        if flag and flag == "PROCEED":
+            return
 
-        split_msg = message.split()
-        if split_msg[0] == "$guess":
+        # Check for a keyword guess
+        split_msg = message.content.split()
+        if split_msg[0] == "$guess" and message.author.id == (self.game.get_questioner()).user.id:
             
             guess = split_msg[1].lower()
 
             # Check if guess has same number of words as keyword
             if len(guess.split()) != len(self.game.keyword.split()):
-                await self.game.get_questioner().send_message(f"Your guess for the keyword contained {len(guess.split())} word(s), but the keyword is made of {len(self.game.keyword.split())} word(s) (separated by spaces).")
+                await (self.game.get_questioner()).send_message(f"Your guess for the keyword contained {len(guess.split())} word(s), but the keyword is made of {len(self.game.keyword.split())} word(s) (separated by spaces).")
                 return
             
             # Check if guess and keyword have the same English roots (stems). If so, then correct.
-            await self.game.send_global_message(f"Questioner {self.game.get_questioner().user.name} guessed **{guess}**. The correct keyword is **{self.game.keyword}**.")
+            await self.game.send_global_message(f"Questioner {(self.game.get_questioner()).user.name} guessed **{guess}**. The correct keyword is **{self.game.keyword}**.")
             stemmer = SnowballStemmer("english")
             guess_stems = [stemmer.stem(re.sub(r'[^a-zA-Z]', '', word.lower()))
                             for word in guess.split()]
             true_stems = [stemmer.stem(re.sub(r'[^a-zA-Z]', '', word.lower()))
                             for word in self.game.keyword.split()]
             if guess_stems == true_stems:
-                await self.game.send_global_message(":white_check_mark: The Sheriff guessed **correctly**. The Civilians win!")
-                await self.game.gamestate.proceed(go_to_trial=False)
+                await self.game.send_global_message(":white_check_mark: The Questioner guessed **correctly**. The Civilians win!")
+                await self.proceed(go_to_trial=False)
             else:
-                await self.game.send_global_message(":no_entry_sign: The Sheriff was **wrong**. The Villains gain the upper hand!")
-                await self.game.gamestate.proceed(go_to_trial=True)
+                await self.game.send_global_message(":no_entry_sign: The Questioner was **wrong**. The Villains gain the upper hand!")
+                await self.proceed(go_to_trial=True)
             return
 
 class GameStateTrial(GameState):
@@ -405,7 +452,7 @@ class GameStateTrial(GameState):
         self = await GameState.initialize_helper(game, GameStateTrial())
         self.time_limit = self.game.settings["trialdur"]
         self.votes = {}
-        self.phase_end_message = f"**The Trial phase's time limit ({self.time_limit} sec) has been reached! If you didn't vote or failed to submit a Trial phase task, your submission will be ignored.**"
+        self.phase_end_message = f"**The Trial phase's time limit ({self.time_limit}sec) has been reached! If you didn't vote or failed to submit a Trial phase task, your submission will be ignored.**"
         suspects = [f"\n`{ply.user.name}`" for ply in self.game.player_list]
         await self.game.send_global_message(f":ballot_box: Everyone has {self.time_limit} seconds to vote for a player to convict. The Civilians win if the player with/tied for the most votes is a Villain. You can vote exactly once. You can change your vote as long as the time limit has not been reached and at least one player has not voted. Type (or copy/paste) the name of the player you want to vote for:" + "".join(suspects))
         for ply in self.game.player_list:
@@ -456,11 +503,14 @@ class GameStateTrial(GameState):
     
     async def handle_message(self, message):
         '''
-        Handles the player votes
+        Handles the input message
         INPUT
-            message; Discord Message object whose content the suspect player that is being voted for
+            message; Discord Message object to handle
         '''
-        await super().handle_message(message)
+        # Check that the time limit has not passed
+        flag = await super().handle_message(message)
+        if flag and flag == "PROCEED":
+            return
 
         # Check if the message author and suspect are both players in this game
         for accuser in self.game.player_list:

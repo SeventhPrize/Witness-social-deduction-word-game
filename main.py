@@ -6,8 +6,8 @@ Runs the Discord bot client and handles user messages and reactions.
 
 import discord
 import os
-from gameplay import Game
 from dotenv import load_dotenv
+from gameplay import Game
 
 MAX_GAMES = 3
 MAX_PLAYERS = 12
@@ -55,7 +55,7 @@ async def on_message(message):
         for category in message.guild.categories:
             if category.name.startswith("Witness-"):
                 for channel in category.channels:
-                    await channel.delete()
+                    await channel.delete()  
                 await category.delete()
         return
 

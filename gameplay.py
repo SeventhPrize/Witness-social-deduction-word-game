@@ -4,7 +4,7 @@ Contains Game and Player classes for Witness gameplay.
 
 import discord
 import random
-import deprecated.gamestates as gs
+import gamestates as gs
 import player_roles as pr
 
 class Game:
@@ -52,11 +52,11 @@ class Game:
         Sets this game's self.settings to the default settings
         '''
         self.settings = {}
-        self.settings["specialroles"] = []          # Special player roles
-        self.settings["villaincount"] = 1           # Number of villain players
-        self.settings["numbannedwords"] = 3         # Number of words the Mastermind bans from WITNESS vocabulary
-        self.settings["questiondur"] = 60           # Seconds duration of the Night phase
-        self.settings["trialdur"] = 300             # Seconds duration of the Day phase
+        self.settings["specialroles"] = set()       # Special player roles
+        self.settings["numbannedwords"] = 3         # Number of words banned from WITNESS vocabulary
+        self.settings["questiondur"] = 300          # Seconds duration of the Questioning phase
+        self.settings["guessdur"] = 120             # Seconds duration of the Guess phase
+        self.settings["trialdur"] = 120             # Seconds duration of the Trial phase
         self.settings["wordsperplayer"] = 2         # Target number of words that each player observes from each WITNESS response
         self.settings["questioncharlimit"] = 100    # Maximum character length of Sheriff's questions to the WITNESS
 
@@ -68,8 +68,10 @@ class Game:
         '''
         await ply.send_message("\n".join([(f"{param} \t {val}")
                                                   for param, val in self.settings.items()]))
+        await ply.send_message(f"This game is hosted by `{self.player_list[0].user.name}`.")
         if ply.user.id == self.player_list[0].user.id:
-            await ply.send_message("`$role <roletitle> <add/remove>` adds/removes a special role to the game."
+            await ply.send_message("`$showroles` shows the roles."
+                                    + "`$role <add/remove> <roletitle>` adds/removes a special role to the game."
                                     + "\n`$<settingname> <settingvalue>` changes a specific setting."
                                     + "\n`$resetdefaultsettings` resets to defaults.")
 
@@ -90,7 +92,7 @@ class Game:
         '''
         Sends the game creation message to the game host.
         '''
-        await self.player_list[0].send_message("**You are the game host. Use `$showsettings` to change settings. Use `$start` to start the game.**")
+        await self.player_list[0].send_message("**You are the game host. Use `$showsettings` to change settings. Use `$showroles` to view roles. Use `$start` to start the game.**")
         return
 
     async def send_global_message(self, content):
@@ -103,7 +105,7 @@ class Game:
             await player.send_message(content)
         return
 
-    async def get_questioner(self):
+    def get_questioner(self):
         if self.questioner is None:
             return None
         else:
@@ -122,6 +124,13 @@ class Game:
                     await self.print_settings(ply)
                     return
         
+        # If $showroles, sends message to author summarizing roles
+        if message.content == "$showroles":
+            for ply in self.player_list:
+                if ply.user.id == message.author.id:
+                    await ply.send_message(pr.get_role_desc())
+                    return 
+
         # If $resetdefaultsettings, resets the default settings
         if message.content == "$resetdefaultsettings" and message.author.id == self.player_list[0].user.id:
             self.default_settings()
@@ -136,9 +145,6 @@ class Game:
 
     async def activate_power(self, title, value):
         self.powers[title] = value
-        for ply in self.player_list:
-            if isinstance(ply.role, pr.Reporter):
-                ply.send_message("**ALERT**\tSomeone activated their power!")
 
 class Player:
     '''
@@ -160,14 +166,13 @@ class Player:
         self.game = game
         self.role = None
         self.channel = await self.create_private_channel(user)
-        await self.send_message("Welcome to **Witness: The Social Deducation Word Game**, powered by **GPT-3.5 Turbo** and written by @SeventhPrize!"
+        await self.send_message(f"Welcome, <@{user.id}>, to **Witness: The Social Deducation Word Game**, powered by **GPT-3.5 Turbo** and written by <@451570118846054432>!"
                                 + "\n:supervillain: A heinous crime has upset the city. It's up to you to find the villains and restore the peace!"
                                 + "\n:key: A secret keyword will be chosen by when the game begins. The Civilians want to figure out the keyword by the end of the game. The Villains, who know the keyword, want to keep the keyword a secret by misleading the Civilians."
-                                + "\n:oncoming_police_car: The Sheriff will ask the WITNESS a series of open-ended questions to find clues about the keyword. The WITNESS's responses will scattered and shuffled among all the players, so everyone must collaborate to piece together the WITNESS's responses."
-                                + "\n:mag: The devious Mastermind will attempt to trick the Civilians by banning words from the WITNESS's vocabulary, making the truth even harder to discern."
+                                + "\n:mag: Players will take turns asking the WITNESS a series of open-ended questions to find clues about the keyword. The WITNESS's responses will scattered and shuffled among all the players, so everyone must collaborate to piece together the WITNESS's responses."
                                 + "\n:ballot_box: But if the Villains may fall if they are too obvious with their tricks--at the end of the game, everyone will vote for a player they suspect to be a Villain. If a Villain receives the most votes, the Villains lose!"
-                                + "\n:person_in_tuxedo: The Villains win if they stop the Sheriff from finding out the keyword AND no Villain is convicted."
-                                + "\n\n:no_entry_sign: This channel is your dedicated communication method for this game. You may not direct-message other players, use admin privileges to view other players' channels, or otherwise use other players' information.")
+                                + "\n:person_in_tuxedo: The Villains win if they stop the Civilians from finding out the keyword AND no Villain is convicted."
+                                + "\n\n:no_entry_sign: This channel is your dedicated communication method for this game. You may not direct-message other players, show players your screen, use admin privileges to view other players' channels, or otherwise share game information.")
         return self
 
     async def create_private_channel(self, user):
