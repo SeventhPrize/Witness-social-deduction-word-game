@@ -7,7 +7,7 @@ import random
 from time import time
 import math
 import re
-import gamestates as gs
+import deprecated.gamestates as gs
 from gpt_responder import GptWitness
 
 # Number of seconds between WITNESS questions. Saves money on OpenAI API.
@@ -19,8 +19,9 @@ class Role:
     Has methods for role actions during each game state.
     '''
 
-    title = None    # String title of this role
-    player = None   # The Player object who holds this role
+    title = None            # String title of this role
+    player = None           # The Player object who holds this role
+    power_activated = None  # Counts the number of times this role has activated their special power
 
     async def initialize(player):
         '''
@@ -43,6 +44,7 @@ class Role:
         self = role_instance
         self.player = player
         self.title = title
+        self.power_activated = 0
         await self.send_team_introduction_message()
         await self.send_role_introduction_message()
         return self
@@ -65,17 +67,18 @@ class Role:
         INPUT
             message; Discord Message object to handle
         '''
-        pass
+        split_msg = message.split()
+        if len(split_msg) >= 1 and split_msg[0] == "$power":
+            if len(split_msg) >= 2:
+                value = " ".join(split_msg[1:])
+            else:
+                value = None
+            await self.power(value)
+            return
 
-    async def night_action(self):
+    async def question_action(self):
         '''
-        Role actions during Night
-        '''
-        pass
-
-    async def daily_action(self):
-        '''
-        Role actions during Day
+        Role actions during Questioning
         '''
         pass
 
@@ -91,11 +94,8 @@ class Role:
         '''
         pass
 
-    def conclusion(self):
-        '''
-        RETURNS a string conclusion for this Role's actions this game
-        '''
-        return ""
+    async def power(self, value):
+        return
 
 class RoleCivilian(Role):
     '''
@@ -143,203 +143,163 @@ class RoleVillain(Role):
                 msg += f"\n\t**{ply.user.name}**"
         await self.player.send_message(msg)
 
-class RoleSheriff(RoleCivilian):
-    '''
-    Class for Sheriff role
-    '''
-
-    prompt_char_limit = None    # Character limit on WITNESS question prompts
-    witness_questions = None    # List of string questions asked to the WITNESS
-    witness_responses = None    # List of string responses received from the WITNESS
-    previous_guess_time = None  # time() call at the previous guess 
-
+class RoleReporter(RoleCivilian):
     async def initialize(player):
         '''
         RETURNS this intialized Role object
         INPUT
             player; Player object who holds this role
         '''
-        self = await Role.initialize_helper(player, "Sheriff", RoleSheriff())
-        self.prompt_char_limit = self.player.game.settings["questioncharlimit"]
-        self.witness_questions = []
-        self.witness_responses = []
-        self.previous_guess_time = 0
+        self = await Role.initialize_helper(player, "Reporter", RoleReporter())
         return self
-
+    
     async def send_role_introduction_message(self):
         '''
-        Sends the Sheriff an introduction message.
+        Sends the Reporter an introduction message.
         '''
-        await self.player.send_message("**Sheriff**, you are the only player with the power to ask the WITNESS questions about the keyword.")
+        await self.player.send_message("**Reporter**, you find out whenver another player activates a special power.")
 
-    async def daily_action(self):
-        '''
-        Prompts the Sheriff to ask the WITNESS questions at Day
-        '''
-        await super().daily_action()
-        await self.player.game.send_global_message(f"The Sheriff has {self.player.game.settings['daydur']} seconds to ask the WITNESS a series of open-ended questions to figure out the keyword. Everyone is encouraged to help--although the Villains might try to mislead. The WITNESS's response is vague and complicated: everyone sees a different portion of each of the WITNESS's clues.")
-        await self.player.send_message("**Sheriff, ask the WITNESS a question about the keyword.**")
-
-    async def guess_action(self):
-        '''
-        Prompts the Sheriff to guess the keyword at Guess
-        '''
-        await super().guess_action()
-        await self.player.game.send_global_message(f"The Sheriff has {self.player.game.settings['guessdur']} seconds to guess the keyword. They only have one attempt. Everyone is encouraged to help brainstorm. The keyword is made of up {len(self.player.game.keyword.split())} word(s).")
-        await self.player.send_message("Sheriff, make your guess.")
-
-    async def handle_message(self, message):
-        '''
-        Handles Sheriff player's messages.
-        If during Day, handles messages as questions to the WITNESS
-        If during Guess, handles messages as keyword guesses
-        INPUT
-            message; Discord message object to handle
-        '''
-        await super().handle_message(message)
-
-        # If Day, handle message as questions to the WITNESS
-        if isinstance(self.player.game.gamestate, gs.GameStateDay):
-            
-            # $readytoguess ends Day early and immediately sends game state to Guess
-            if message.content == "$readytoguess":
-                await self.player.game.send_global_message("The Sheriff has elected to end questioning early!")
-                await self.player.game.gamestate.proceed()
-                return
-            
-            # Check for question frequency cooldown
-            if time() - self.previous_guess_time < QUESTION_COOLDOWN:
-                await self.player.send_message(f"You're asking questions too quickly! Wait {QUESTION_COOLDOWN} seconds between questions.")
-                return
-            
-            # Check for proper question length
-            if len(message.content) > self.prompt_char_limit:
-                await self.player.send_message(f"Your question must be fewer than {self.prompt_char_limit} characters. Your question was {len(message.content)} characters.")
-                return
-
-            # Record question and answer
-            self.witness_questions.append(message.content)
-            witness_response = self.player.game.gpt_witness.ask(message.content)
-            self.witness_responses.append(" ".join(witness_response))
-            self.previous_guess_time = time()
-
-            # Shuffle response and distribute clues to players
-            random.shuffle(witness_response)
-            for ply in self.player.game.player_list:
-                observed_words = witness_response[: self.player.game.settings["wordsperplayer"]]
-                witness_response = witness_response[self.player.game.settings["wordsperplayer"] :]
-                
-                # Report clue
-                msg = f"Sheriff `{self.player.user.name}` asked the WITNESS:"
-                msg += f"\n\t**{message.content}**"
-                msg += "\n"
-                msg += "You observed the following words."
-                for word in observed_words:
-                    msg += f"\n\t**{word}**"
-                msg += "\n" + f"There are {math.floor(self.player.game.gamestate.time_limit - time() + self.player.game.gamestate.start)} of {self.player.game.gamestate.time_limit} seconds remaining."
-                await ply.send_message(msg)
-            return
-        
-        # If Guess, handle message as keyword guess
-        if isinstance(self.player.game.gamestate, gs.GameStateGuess):
-            guess = message.content.strip()
-
-            # Check if guess has same number of words as keyword
-            if len(guess.split()) != len(self.player.game.keyword.split()):
-                await self.player.send_message(f"Your guess for the keyword contained {len(guess.split())} word(s), but the keyword is made of {len(self.player.game.keyword.split())} word(s) (separated by spaces).")
-                return
-            
-            # Check if guess and keyword have the same English roots (stems). If so, then correct.
-            await self.player.game.send_global_message(f"The Sheriff guessed **{guess}**. The correct keyword is **{self.player.game.keyword}**.")
-            stemmer = SnowballStemmer("english")
-            guess_stems = [stemmer.stem(re.sub(r'[^a-zA-Z]', '', word.lower()))
-                           for word in guess.split()]
-            true_stems = [stemmer.stem(re.sub(r'[^a-zA-Z]', '', word.lower()))
-                          for word in self.player.game.keyword.split()]
-            if guess_stems == true_stems:
-                await self.player.game.send_global_message(":white_check_mark: The Sheriff guessed **correctly**. The Civilians win!")
-                await self.player.game.gamestate.proceed(go_to_trial=False)
-            else:
-                await self.player.game.send_global_message(":no_entry_sign: The Sheriff was **wrong**. The Villains gain the upper hand!")
-                await self.player.game.gamestate.proceed(go_to_trial=True)
-            return
-        
-    def conclusion(self):
-        '''
-        RETURNS string reporting the Sheriff's questions and answers from Day phase
-        '''
-        msg = super().conclusion()           
-        msg += ("Here are the WITNESS prompts and responses:"
-                + "".join([f"\n*{question}* \n{response}"
-                           for question, response in zip(self.witness_questions, self.witness_responses)])) 
-        return msg
-
-class RoleMastermind(RoleVillain):
-    '''
-    Class for Mastermind role
-    '''
-
-    banned_words = None     # list of string words that are banned from WITNESS vocabulary
-    n_banned_words = None   # number of words to be banned from WITNESS vocabulary
-
+class RoleUndercoverInvestigator(RoleCivilian):
     async def initialize(player):
         '''
         RETURNS this intialized Role object
         INPUT
             player; Player object who holds this role
         '''
-        self = await Role.initialize_helper(player, "Mastermind", RoleMastermind())
-        self.n_banned_words = self.player.game.settings["numbannedwords"]
+        self = await Role.initialize_helper(player, "UndercoverInvestigator", RoleUndercoverInvestigator())
         return self
     
     async def send_role_introduction_message(self):
         '''
-        Sends the Mastermind an introduction message.
+        Sends the UndercoverInvestigator an introduction message.
         '''
-        await self.player.send_message("**Mastermind**, you have the power to censor the WITNESS, making it difficult for the Civilians to learn the keyword.")
+        await self.player.send_message("**UndercoverInvestigator**, once per game, use command `$power` to alert the active Questioner that you are a Civilian.")
 
-    async def night_action(self):
-        '''
-        Prompts the Mastermind to ban words from WITNESS vocabulary
-        '''
-        await super().night_action()
-        await self.player.game.send_global_message(":dizzy_face: The Mastermind is banning words from the WITNESS's vocabulary . . .")
-        await self.player.send_message(f"**Mastermind, write {self.n_banned_words} words (separated by spaces) that the WITNESS cannot use when describing the keyword, `{self.player.game.keyword}`.**")
+    async def power(self, value=None):
+        await super.power(value)
+
+        if self.power_activated == 0:
+            self.power_activated += 1
+            await self.player.game.activate_power(self.title, value)
+            active_questioner = self.player.game.get_questioner()
+            await self.player.send_message(f"Alerted Questioner `{active_questioner.user.name}` that you are a Civilian.")
+            await active_questioner.send_message(f"**ALERT**\tUndercoverInvestigator `{self.player.user.name}` secretly alerted you that they are a Civilian. No one else knows this.")
+            return
         
-    async def handle_message(self, message):
+class RoleDetective(RoleCivilian):
+    async def initialize(player):
         '''
-        If Night, handles message as a list of words to ban from WITNESS vocabulary
+        RETURNS this intialized Role object
+        INPUT
+            player; Player object who holds this role
         '''
-        await super().handle_message(message)
-        
-        if isinstance(self.player.game.gamestate, gs.GameStateNight):
-            split_msg = message.content.strip().split()
-
-            # Check if correct number of words are banned
-            if len(split_msg) != self.n_banned_words:
-                await self.player.send_message(f"Write {self.n_banned_words} words (separated by spaces). You wrote {len(split_msg)} words.")
-                return
-            
-            # Check if each word is less than 16 characters
-            for word in split_msg:
-                if len(word) > 16:
-                    await self.player.send_message(f"Each submitted word must be 20 or fewer characters. `{word}` is {len(word)} characters. Submit your {self.n_banned_words} again.")
-                    return
-                
-            # Initialize GptWitness object
-            n_words = self.player.game.settings["wordsperplayer"] * len(self.player.game.player_list)
-            self.player.game.gpt_witness = GptWitness(self.player.game.keyword, n_words, split_msg)
-
-            await self.player.send_message("Banned words successfully submitted! The WITNESS will not use of these words.")
-            await self.player.game.gamestate.proceed()
-
-    def conclusion(self):
-        '''
-        RETURNS string reporting the Mastermind's banned words from Night phase
-        '''
-        msg = super().conclusion()
-        msg += ("The Mastermind banned the following words from the WITNESS's vocabulary: "
-                + ", ".join(self.player.game.gpt_witness.banned_words))
-        return msg
-
+        self = await Role.initialize_helper(player, "Detective", RoleDetective())
+        return self
     
+    async def send_role_introduction_message(self):
+        '''
+        Sends the Detective an introduction message.
+        '''
+        word = random.choice(self.player.game.gpt_witness.banned_words)
+        await self.player.send_message(f"**Detective**, you know one of the banned words: **{word}**.")
+        
+class RoleCensorer(RoleVillain):
+    async def initialize(player):
+        '''
+        RETURNS this intialized Role object
+        INPUT
+            player; Player object who holds this role
+        '''
+        self = await Role.initialize_helper(player, "Censorer", RoleCensorer())
+        return self
+    
+    async def send_role_introduction_message(self):
+        '''
+        Sends the Censorer an introduction message.
+        '''
+        await self.player.send_message("**Censorer**, once per game, use command `$power` to censor the next WITNESS's next response. Everyone will only observe a single word from the WITNESS's response. This may mean that some of the response is not observed by anybody.")
+
+    async def power(self, value=None):
+        await super.power(value)
+
+        if self.power_activated == 0:
+            self.power_activated += 1
+            await self.player.game.activate_power(self.title, value)
+            await self.player.send_message("You censored the WITNESS's next response!")
+            return
+
+class RoleIntimidator(RoleVillain):
+    async def initialize(player):
+        '''
+        RETURNS this intialized Role object
+        INPUT
+            player; Player object who holds this role
+        '''
+        self = await Role.initialize_helper(player, "Intimidator", RoleIntimidator())
+        return self
+    
+    async def send_role_introduction_message(self):
+        '''
+        Sends the Intimidator an introduction message.
+        '''
+        await self.player.send_message("**Intimidator**, once per game, use command `$power <text>` to add additional text to the next question asked to the WITNESS. This text is secret; no one will know about this addendum.")
+
+    async def power(self, value=""):
+        await super.power(value)
+
+        if self.power_activated == 0:
+            if value > self.player.game.settings["questioncharlimit"]:
+                await self.player.send_message(f"Your addendum text is too long! It is {len(value)} characters, and it capped at {self.player.game.settings['questioncharlimit']} characters. Enter again.")
+            self.power_activated += 1
+            await self.player.game.activate_power(self.title, value)
+            await self.player.send_message(f"You added the following text to the WITNESS's next question: {value}")
+            return
+
+class RoleHacker(RoleVillain):
+    async def initialize(player):
+        '''
+        RETURNS this intialized Role object
+        INPUT
+            player; Player object who holds this role
+        '''
+        self = await Role.initialize_helper(player, "Hacker", RoleHacker())
+        return self
+    
+    async def send_role_introduction_message(self):
+        '''
+        Sends the Hacker an introduction message.
+        '''
+        await self.player.send_message("**Hacker**, once per game, use command `$power` to secretly force the WITNESS to ignore the next question they are asked. The WITNESS will instead answer the previous question again.")
+
+    async def power(self, value=None):
+        await super.power(value)
+
+        if self.power_activated == 0:
+            self.power_activated += 1
+            await self.player.game.activate_power(self.title, value)
+            await self.player.send_message("You hacked the WITNESS's next question!")
+            return
+
+class RolePolitician(RoleCivilian):
+    async def initialize(player):
+        '''
+        RETURNS this intialized Role object
+        INPUT
+            player; Player object who holds this role
+        '''
+        self = await Role.initialize_helper(player, "Politician", RolePolitician())
+        return self
+    
+    async def send_role_introduction_message(self):
+        '''
+        Sends the Politician an introduction message.
+        '''
+        await self.player.send_message("**Politician**, you are a Civilian. Once per game during Questioning, use command `$power` to become a Villain instead.")
+
+    async def power(self, value=None):
+        await super.power(value)
+
+        if self.power_activated == 0:
+            self.power_activated += 1
+# TODO
+            return

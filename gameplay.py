@@ -4,7 +4,8 @@ Contains Game and Player classes for Witness gameplay.
 
 import discord
 import random
-import gamestates as gs
+import deprecated.gamestates as gs
+import player_roles as pr
 
 class Game:
     '''
@@ -14,10 +15,12 @@ class Game:
     registration_msg = None # The discord message that users react to to register for this game 
     keyword = None          # The keyword for this game
     player_list = None      # List of players  
+    questioner = None       # Index of the player who is the current questioner
     role_dict = None        # Dictionary mapping a string title of each role to the list of players with that role
     gamestate = None        # The GameState object describing the phase of the game
     gpt_witness = None      # The GptWitness object that provides the WITNESS clues
     settings = None         # Dictionary mapping a string name for each game setting to its natural number value
+    powers = {}
 
     async def initialize(trigger_msg):
         '''
@@ -44,25 +47,18 @@ class Game:
         self.gamestate = await gs.GameStateCreation.initialize(self)
         return self
     
-    def get_keyword(self):
-        '''
-        RETURNS the keyword for this game 
-        '''
-        return "TEST"
-
     def default_settings(self):
         '''
         Sets this game's self.settings to the default settings
         '''
         self.settings = {}
-        self.settings["villaincount"] = 1   # Number of villain players
-        self.settings["numbannedwords"] = 3 # Number of words the Mastermind bans from WITNESS vocabulary
-        self.settings["nightdur"] = 60      # Seconds duration of the Night phase
-        self.settings["daydur"] = 300       # Seconds duration of the Day phase
-        self.settings["guessdur"] = 90      # Seconds duration of the Guess phase
-        self.settings["trialdur"] = 90      # Seconds duration of the Trial phase
-        self.settings["wordsperplayer"] = 2 # Number of words that each player observes from each WITNESS response
-        self.settings["questioncharlimit"] = 100 # Maximum character length of Sheriff's questions to the WITNESS
+        self.settings["specialroles"] = []          # Special player roles
+        self.settings["villaincount"] = 1           # Number of villain players
+        self.settings["numbannedwords"] = 3         # Number of words the Mastermind bans from WITNESS vocabulary
+        self.settings["questiondur"] = 60           # Seconds duration of the Night phase
+        self.settings["trialdur"] = 300             # Seconds duration of the Day phase
+        self.settings["wordsperplayer"] = 2         # Target number of words that each player observes from each WITNESS response
+        self.settings["questioncharlimit"] = 100    # Maximum character length of Sheriff's questions to the WITNESS
 
     async def print_settings(self, ply):
         '''
@@ -71,9 +67,11 @@ class Game:
             ply; Player object for the player to send the game settings summary to 
         '''
         await ply.send_message("\n".join([(f"{param} \t {val}")
-                                                  for param, val in self.settings.items()])
-                                        + "\n`$<settingname> <settingvalue>` changes a specific setting."
-                                        + "\n`$resetdefaultsettings` resets to defaults.")
+                                                  for param, val in self.settings.items()]))
+        if ply.user.id == self.player_list[0].user.id:
+            await ply.send_message("`$role <roletitle> <add/remove>` adds/removes a special role to the game."
+                                    + "\n`$<settingname> <settingvalue>` changes a specific setting."
+                                    + "\n`$resetdefaultsettings` resets to defaults.")
 
     async def add_player(self, user):
         '''
@@ -105,6 +103,12 @@ class Game:
             await player.send_message(content)
         return
 
+    async def get_questioner(self):
+        if self.questioner is None:
+            return None
+        else:
+            return self.player_list[self.questioner]
+
     async def handle_message(self, message):
         '''
         Handles the input message
@@ -129,6 +133,12 @@ class Game:
         
         # Otherwise, let the GameState handle the message
         await self.gamestate.handle_message(message)
+
+    async def activate_power(self, title, value):
+        self.powers[title] = value
+        for ply in self.player_list:
+            if isinstance(ply.role, pr.Reporter):
+                ply.send_message("**ALERT**\tSomeone activated their power!")
 
 class Player:
     '''

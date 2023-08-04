@@ -1,0 +1,7 @@
+Give a list of words related to the keyword. The prompt specifies the number of related words to give.
+
+Example prompt: Keyword: "pizza". Word count: 6.
+Example response: tomato flat bread food cheese pepperoni
+
+Example prompt: Keyword: "bed". Word count: 10.
+Example response: sleep pillow blanket mattress nap dream nightmare rest drowsy dormitory
